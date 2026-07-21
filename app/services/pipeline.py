@@ -87,7 +87,9 @@ def _process_block_with_retries(block_text, settings, prompt, state):
             trial_state = fresh_state(state)
             raw = extract_fields_with_gpt(block_text, settings, prompt, trial_state)
             raw = validate_json_structure(raw)
-            apply_gpt_state(trial_state, raw)
+            apply_gpt_state(
+                trial_state, raw, allow_overwrite=settings.merge_allow_overwrite
+            )
             # Commit into caller's state object.
             state.clear()
             state.update(trial_state)

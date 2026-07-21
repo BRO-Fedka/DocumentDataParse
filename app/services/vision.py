@@ -16,7 +16,7 @@ def _ocr_pdf_bytes(pdf_bytes, settings):
     # type: (bytes, Settings) -> str
     content = base64.b64encode(pdf_bytes).decode("utf-8")
     response = requests.post(
-        "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText",
+        settings.yandex_vision_api_url,
         headers={
             "Authorization": "Api-Key {}".format(settings.yandex_api_key),
             "Content-Type": "application/json",
@@ -26,11 +26,11 @@ def _ocr_pdf_bytes(pdf_bytes, settings):
             "mimeType": "application/pdf",
             "content": content,
             "textDetectionParams": {
-                "languageCodes": ["ru", "en"],
-                "textTypes": ["printed"],
+                "languageCodes": settings.vision_language_codes_list,
+                "textTypes": settings.vision_text_types_list,
             },
         },
-        timeout=120,
+        timeout=settings.vision_http_timeout_seconds,
     )
     if response.status_code != 200:
         raise VisionError(

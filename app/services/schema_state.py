@@ -10,6 +10,18 @@ from loguru import logger
 UNKNOWN = "???"
 
 
+class OverwriteError(ValueError):
+    def __init__(self, key, old_value, new_value):
+        self.key = key
+        self.old_value = old_value
+        self.new_value = new_value
+        super(OverwriteError, self).__init__(
+            "Overwrite forbidden for key '{}': {!r} -> {!r}".format(
+                key, old_value, new_value
+            )
+        )
+
+
 def _find_json_object_span(text):
     # type: (str) -> Optional[str]
     start = text.find("{")
@@ -86,13 +98,13 @@ def _values_equal(left, right):
     return left == right
 
 
-def apply_gpt_state(state, response):
-    # type: (Dict[str, Any], Dict[str, Any]) -> Dict[str, Any]
+def apply_gpt_state(state, response, allow_overwrite=True):
+    # type: (Dict[str, Any], Dict[str, Any], bool) -> Dict[str, Any]
     """
     Merge GPT response into state.
     - Fill ??? slots with new non-unknown values.
-    - Allow careful overwrite of already set fields (logged).
-    - Ignore unknown new values for already filled fields.
+    - If allow_overwrite: careful overwrite of already set fields (logged).
+    - If not allow_overwrite: different value raises OverwriteError.
     """
     if not isinstance(response, dict):
         raise ValueError("GPT response must be a JSON object")
@@ -110,6 +122,9 @@ def apply_gpt_state(state, response):
 
         if _is_unknown(new_val) or _values_equal(old_val, new_val):
             continue
+
+        if not allow_overwrite:
+            raise OverwriteError(key, old_val, new_val)
 
         logger.info(
             "Careful overwrite key={!r}: {!r} -> {!r}",

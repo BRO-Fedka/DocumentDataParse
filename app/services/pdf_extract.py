@@ -17,7 +17,8 @@ class PdfTextResult(object):
     reason: str
 
 
-def _page_is_image_heavy(page):
+def _page_is_image_heavy(page, area_ratio):
+    # type: (object, float) -> bool
     images = page.get_images(full=True)
     if not images:
         return False
@@ -31,7 +32,7 @@ def _page_is_image_heavy(page):
             continue
         width = info.get("width") or 0
         height = info.get("height") or 0
-        if width * height >= page_area * 0.35:
+        if width * height >= page_area * area_ratio:
             large += 1
     return large > 0
 
@@ -65,7 +66,7 @@ def analyze_pdf(path, settings):
         image_heavy_pages = 0
         for page in doc:
             page_texts.append(page.get_text("text") or "")
-            if _page_is_image_heavy(page):
+            if _page_is_image_heavy(page, settings.pdf_image_page_area_ratio):
                 image_heavy_pages += 1
 
         text = "\n".join(t.strip() for t in page_texts if t.strip()).strip()

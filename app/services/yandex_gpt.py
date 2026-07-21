@@ -5,25 +5,12 @@ from typing import Any, Dict
 import requests
 from loguru import logger
 
-from app.config import Settings
+from app.config import Settings, load_system_prompt
 from app.services.schema_state import state_to_json
 
 
 class YandexGptError(RuntimeError):
     pass
-
-
-SYSTEM_PROMPT = (
-    "Ты — ассистент, который извлекает структурированные данные из документов. "
-    "Отвечай только JSON-объектом той же структуры, что в текущем состоянии. "
-    "Поля со значением \"???\" заполняй, если данные есть во фрагменте. "
-    "Если данных нет — оставляй \"???\". "
-    "Уже заполненные поля обычно сохраняй. "
-    "Перезаписывать уже найденное значение разрешено только очень осторожно: "
-    "когда во фрагменте есть явно более точные или исправляющие данные "
-    "(опечатка, неполная запись, противоречие с более надёжным местом документа). "
-    "Не меняй значения наугад и не подставляй догадки."
-)
 
 
 def build_user_message(prompt_template, state_json, block_text):
@@ -66,11 +53,12 @@ def _extract_json_object(gpt_text):
 
 def extract_fields_with_gpt(block_text, settings, prompt_template, state):
     # type: (str, Settings, str, Dict[str, Any]) -> Dict[str, Any]
+    system_prompt = load_system_prompt(settings)
     state_json = state_to_json(state)
     user_text = build_user_message(prompt_template, state_json, block_text)
     model_uri = "gpt://{}/{}".format(settings.yandex_folder_id, settings.yandex_gpt_model)
 
-    total_chars = len(SYSTEM_PROMPT) + len(user_text)
+    total_chars = len(system_prompt) + len(user_text)
     if total_chars > settings.max_input_chars:
         raise YandexGptError(
             "Request exceeds input budget: {} > {} chars".format(
@@ -83,7 +71,7 @@ def extract_fields_with_gpt(block_text, settings, prompt_template, state):
     )
 
     response = requests.post(
-        "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+        settings.yandex_gpt_api_url,
         headers={
             "Authorization": "Api-Key {}".format(settings.yandex_api_key),
             "Content-Type": "application/json",
@@ -96,11 +84,11 @@ def extract_fields_with_gpt(block_text, settings, prompt_template, state):
                 "maxTokens": str(settings.yandex_gpt_max_tokens),
             },
             "messages": [
-                {"role": "system", "text": SYSTEM_PROMPT},
+                {"role": "system", "text": system_prompt},
                 {"role": "user", "text": user_text},
             ],
         },
-        timeout=180,
+        timeout=settings.gpt_http_timeout_seconds,
     )
     if response.status_code != 200:
         raise YandexGptError(

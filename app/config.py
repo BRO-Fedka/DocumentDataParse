@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,10 @@ class Settings(BaseSettings):
     yandex_api_key: str = Field(..., alias="YANDEX_API_KEY")
     yandex_folder_id: str = Field(..., alias="YANDEX_FOLDER_ID")
 
+    host: str = Field("0.0.0.0", alias="HOST")
+    port: int = Field(8000, alias="PORT")
+    debug: bool = Field(False, alias="DEBUG")
+
     # Max input tokens for the whole GPT request (system + user).
     gpt_max_input_tokens: int = Field(32760, alias="GPT_MAX_INPUT_TOKENS")
     # Hard conversion: tokens -> characters.
@@ -35,10 +40,32 @@ class Settings(BaseSettings):
     pdf_scan_image_page_ratio: float = Field(0.5, alias="PDF_SCAN_IMAGE_PAGE_RATIO")
     pdf_force_vision: bool = Field(False, alias="PDF_FORCE_VISION")
     pdf_force_text: bool = Field(False, alias="PDF_FORCE_TEXT")
+    pdf_image_page_area_ratio: float = Field(0.35, alias="PDF_IMAGE_PAGE_AREA_RATIO")
 
     yandex_gpt_model: str = Field("yandexgpt-5.1/latest", alias="YANDEX_GPT_MODEL")
     yandex_gpt_temperature: float = Field(0.1, alias="YANDEX_GPT_TEMPERATURE")
     yandex_gpt_max_tokens: int = Field(2000, alias="YANDEX_GPT_MAX_TOKENS")
+    yandex_gpt_api_url: str = Field(
+        "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+        alias="YANDEX_GPT_API_URL",
+    )
+    yandex_vision_api_url: str = Field(
+        "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText",
+        alias="YANDEX_VISION_API_URL",
+    )
+
+    gpt_http_timeout_seconds: int = Field(180, alias="GPT_HTTP_TIMEOUT_SECONDS")
+    vision_http_timeout_seconds: int = Field(120, alias="VISION_HTTP_TIMEOUT_SECONDS")
+
+    # Comma-separated lists
+    vision_language_codes: str = Field("ru,en", alias="VISION_LANGUAGE_CODES")
+    vision_text_types: str = Field("printed", alias="VISION_TEXT_TYPES")
+
+    system_prompt_file: str = Field(
+        str(ROOT_DIR / "system_prompt.txt"), alias="SYSTEM_PROMPT_FILE"
+    )
+
+    merge_allow_overwrite: bool = Field(True, alias="MERGE_ALLOW_OVERWRITE")
 
     log_dir: str = Field("logs", alias="LOG_DIR")
     log_retention: str = Field("30 days", alias="LOG_RETENTION")
@@ -50,6 +77,24 @@ class Settings(BaseSettings):
     def max_input_chars(self):
         # type: () -> int
         return int(self.gpt_max_input_tokens) * int(self.chars_per_token)
+
+    @property
+    def system_prompt_path(self):
+        # type: () -> Path
+        path = Path(self.system_prompt_file)
+        if not path.is_absolute():
+            path = ROOT_DIR / path
+        return path
+
+    @property
+    def vision_language_codes_list(self):
+        # type: () -> list
+        return [part.strip() for part in self.vision_language_codes.split(",") if part.strip()]
+
+    @property
+    def vision_text_types_list(self):
+        # type: () -> list
+        return [part.strip() for part in self.vision_text_types.split(",") if part.strip()]
 
     @property
     def log_dir_path(self):
@@ -72,3 +117,13 @@ class Settings(BaseSettings):
 def get_settings():
     # type: () -> Settings
     return Settings()
+
+
+def load_system_prompt(settings=None):
+    # type: (Optional[Settings]) -> str
+    if settings is None:
+        settings = get_settings()
+    path = settings.system_prompt_path
+    if not path.is_file():
+        raise FileNotFoundError("System prompt file not found: {}".format(path))
+    return path.read_text(encoding="utf-8").strip()

@@ -4,9 +4,9 @@ from typing import List
 
 from loguru import logger
 
-from app.config import Settings
+from app.config import Settings, load_system_prompt
 from app.services.schema_state import state_to_json
-from app.services.yandex_gpt import SYSTEM_PROMPT, build_user_message
+from app.services.yandex_gpt import build_user_message
 
 
 def pack_atoms_into_blocks(atoms, prompt, state, settings):
@@ -16,6 +16,7 @@ def pack_atoms_into_blocks(atoms, prompt, state, settings):
     If atom does not fit into current block, start a new block with that atom.
     """
     max_chars = settings.max_input_chars
+    system_prompt = load_system_prompt(settings)
     state_json = state_to_json(state)
     cleaned = [atom.strip() for atom in atoms if atom and atom.strip()]
     if not cleaned:
@@ -24,7 +25,7 @@ def pack_atoms_into_blocks(atoms, prompt, state, settings):
     def fits(block_text):
         # type: (str) -> bool
         user = build_user_message(prompt, state_json, block_text)
-        total = len(SYSTEM_PROMPT) + len(user)
+        total = len(system_prompt) + len(user)
         return total <= max_chars
 
     blocks = []  # type: List[str]
