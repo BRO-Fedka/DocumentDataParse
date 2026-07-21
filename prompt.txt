@@ -1,0 +1,33 @@
+Тип документа: договор.
+Извлеки реквизиты договора по каркасу ниже.
+
+{
+  "contract_number": "???",
+  "contract_date": "???",
+  "end_date": "???",
+  "contract_name": "???",
+  "object_name": "???",
+  "object_address": "???",
+  "work_types": "???",
+  "customer_name": "???",
+  "customer_inn": "???",
+  "executor_name": "???",
+  "executor_inn": "???",
+  "works_cost": "???",
+  "contract_price": "???"
+}
+
+Смысл полей:
+- contract_number — номер договора
+- contract_date — дата заключения договора
+- end_date — дата окончания
+- contract_name — наименование договора
+- object_name — наименование объекта
+- object_address — адрес объекта
+- work_types — виды работ
+- customer_name — наименование заказчика
+- customer_inn — ИНН заказчика
+- executor_name — наименование исполнителя
+- executor_inn — ИНН исполнителя
+- works_cost — стоимость работ по договору
+- contract_price — цена договора

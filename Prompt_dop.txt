@@ -1,0 +1,15 @@
+Тип документа: дополнительное соглашение.
+Извлеки реквизиты доп.соглашения по каркасу ниже.
+
+{
+  "contract_number": "???",
+  "contract_date": "???",
+  "addendum_number": "???",
+  "addendum_date": "???"
+}
+
+Смысл полей:
+- contract_number — номер договора
+- contract_date — дата договора
+- addendum_number — номер доп.соглашения
+- addendum_date — дата доп.соглашения
