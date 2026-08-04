@@ -30,6 +30,15 @@ def build_user_message(prompt_template, state_json, block_text):
     )
 
 
+def measure_request_chars(prompt_template, state, block_text, settings):
+    # type: (str, dict, str, Settings) -> int
+    """Full GPT request size (system + user) with the given state."""
+    system_prompt = load_system_prompt(settings)
+    state_json = state_to_json(state, compact=True)
+    user_text = build_user_message(prompt_template, state_json, block_text)
+    return len(system_prompt) + len(user_text)
+
+
 def _extract_json_object(gpt_text):
     # type: (str) -> Dict[str, Any]
     text = gpt_text.strip()
@@ -54,7 +63,7 @@ def _extract_json_object(gpt_text):
 def extract_fields_with_gpt(block_text, settings, prompt_template, state):
     # type: (str, Settings, str, Dict[str, Any]) -> Dict[str, Any]
     system_prompt = load_system_prompt(settings)
-    state_json = state_to_json(state)
+    state_json = state_to_json(state, compact=True)
     user_text = build_user_message(prompt_template, state_json, block_text)
     model_uri = "gpt://{}/{}".format(settings.yandex_folder_id, settings.yandex_gpt_model)
 

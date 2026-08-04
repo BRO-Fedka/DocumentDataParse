@@ -137,6 +137,9 @@ def apply_gpt_state(state, response, allow_overwrite=True):
     return state
 
 
-def state_to_json(state):
-    # type: (Dict[str, Any]) -> str
+def state_to_json(state, compact=True):
+    # type: (Dict[str, Any], bool) -> str
+    """Serialize state for GPT requests (compact by default to save budget)."""
+    if compact:
+        return json.dumps(state, ensure_ascii=False, separators=(",", ":"))
     return json.dumps(state, ensure_ascii=False, indent=2)

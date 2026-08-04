@@ -8,7 +8,7 @@ from werkzeug.datastructures import FileStorage
 
 from app.config import Settings
 from app.models import FileParseResult, FileResultMeta
-from app.services.blocking import pack_atoms_into_blocks
+from app.services.blocking import take_next_block
 from app.services.docx_extract import extract_docx_atoms
 from app.services.pdf_extract import analyze_pdf, extract_pdf_page_atoms
 from app.services.schema_state import (
@@ -109,31 +109,45 @@ def _process_block_with_retries(block_text, settings, prompt, state):
     )
 
 
-def _run_analysis(blocks, settings, prompt, skeleton):
-    # type: (List[str], Settings, str, dict) -> Tuple[dict, int]
+def _run_analysis(atoms, settings, prompt, skeleton):
+    # type: (List[str], Settings, str, dict) -> Tuple[dict, int, int]
     """
-    Full pass over all blocks. Retries whole analysis up to GPT_ANALYSIS_RETRIES (M).
-    Returns final state and total GPT block-call attempts.
+    Full pass over document atoms. Each next block is packed with the *current*
+    JSON state size. Retries whole analysis up to GPT_ANALYSIS_RETRIES (M).
+
+    Returns final state, total GPT attempts, and number of blocks sent.
     """
     last_error = None  # type: Optional[Exception]
     total_attempts = 0
+    cleaned = [atom.strip() for atom in atoms if atom and atom.strip()]
 
     for analysis_round in range(1, settings.gpt_analysis_retries + 1):
         state = fresh_state(skeleton)
+        remaining = list(cleaned)
+        blocks_sent = 0
         try:
             logger.info(
-                "Analysis round {}/{} blocks={}",
+                "Analysis round {}/{} atoms={}",
                 analysis_round,
                 settings.gpt_analysis_retries,
-                len(blocks),
+                len(remaining),
             )
-            for index, block_text in enumerate(blocks, start=1):
-                logger.info("Processing block {}/{}", index, len(blocks))
+            while remaining:
+                # Pack next block against the current (possibly filled) JSON.
+                block_text = take_next_block(remaining, prompt, state, settings)
+                if not block_text:
+                    break
+                blocks_sent += 1
+                logger.info(
+                    "Processing block {} (remaining_atoms={})",
+                    blocks_sent,
+                    len(remaining),
+                )
                 state, attempts = _process_block_with_retries(
                     block_text, settings, prompt, state
                 )
                 total_attempts += attempts
-            return state, total_attempts
+            return state, total_attempts, blocks_sent
         except Exception as exc:
             last_error = exc
             logger.warning(
@@ -167,12 +181,9 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
         if not any(atom.strip() for atom in atoms):
             raise ValueError("Extracted text is empty")
 
-        # Pack with initial skeleton size (all ???).
-        blocks = pack_atoms_into_blocks(atoms, prompt, skeleton, settings)
-        if not blocks:
-            raise ValueError("No text blocks to send to GPT")
-
-        fields, gpt_attempts = _run_analysis(blocks, settings, prompt, skeleton)
+        fields, gpt_attempts, blocks_sent = _run_analysis(
+            atoms, settings, prompt, skeleton
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "Parsed file ok filename={} size={} type={} source={} pages={} "
@@ -182,7 +193,7 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
             content_type,
             text_source,
             page_count,
-            len(blocks),
+            blocks_sent,
             gpt_attempts,
             duration_ms,
         )

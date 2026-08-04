@@ -1,66 +1,52 @@
-"""Pack document atoms into GPT-sized text blocks."""
+"""Pack document atoms into GPT-sized text blocks using current JSON state."""
 
-from typing import List
+from typing import List, Optional
 
 from loguru import logger
 
-from app.config import Settings, load_system_prompt
-from app.services.schema_state import state_to_json
-from app.services.yandex_gpt import build_user_message
+from app.config import Settings
+from app.services.yandex_gpt import measure_request_chars
 
 
-def pack_atoms_into_blocks(atoms, prompt, state, settings):
-    # type: (List[str], str, dict, Settings) -> List[str]
+def take_next_block(atoms, prompt, state, settings):
+    # type: (List[str], str, dict, Settings) -> Optional[str]
     """
-    Greedy pack: append atom to current block while full request fits max_input_chars.
-    If atom does not fit into current block, start a new block with that atom.
+    Build one block from the front of `atoms` using the *current* state size.
+
+    Atoms that fit are popped from `atoms`. Returns block text, or None if
+    `atoms` is empty.
     """
+    if not atoms:
+        return None
+
     max_chars = settings.max_input_chars
-    system_prompt = load_system_prompt(settings)
-    state_json = state_to_json(state)
-    cleaned = [atom.strip() for atom in atoms if atom and atom.strip()]
-    if not cleaned:
-        return []
-
-    def fits(block_text):
-        # type: (str) -> bool
-        user = build_user_message(prompt, state_json, block_text)
-        total = len(system_prompt) + len(user)
-        return total <= max_chars
-
-    blocks = []  # type: List[str]
     current_parts = []  # type: List[str]
 
-    for atom in cleaned:
-        candidate_parts = current_parts + [atom]
+    while atoms:
+        candidate_parts = current_parts + [atoms[0]]
         candidate = "\n".join(candidate_parts)
+        size = measure_request_chars(prompt, state, candidate, settings)
+
         if not current_parts:
-            if not fits(candidate):
+            if size > max_chars:
                 raise ValueError(
                     "Single document atom exceeds GPT input limit "
-                    "({} chars budget)".format(max_chars)
+                    "({} > {} chars) with current JSON state".format(size, max_chars)
                 )
-            current_parts = candidate_parts
+            current_parts.append(atoms.pop(0))
             continue
 
-        if fits(candidate):
-            current_parts = candidate_parts
+        if size <= max_chars:
+            current_parts.append(atoms.pop(0))
         else:
-            blocks.append("\n".join(current_parts))
-            if not fits(atom):
-                raise ValueError(
-                    "Single document atom exceeds GPT input limit "
-                    "({} chars budget)".format(max_chars)
-                )
-            current_parts = [atom]
+            break
 
-    if current_parts:
-        blocks.append("\n".join(current_parts))
-
+    block = "\n".join(current_parts)
     logger.info(
-        "Packed {} atoms into {} GPT blocks (budget_chars={})",
-        len(cleaned),
-        len(blocks),
+        "Built block atoms={} chars={} budget={} remaining_atoms={}",
+        len(current_parts),
+        measure_request_chars(prompt, state, block, settings),
         max_chars,
+        len(atoms),
     )
-    return blocks
+    return block
