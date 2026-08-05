@@ -2,12 +2,32 @@
 
 import copy
 import json
+import re
 from typing import Any, Dict, Optional
 
 from loguru import logger
 
 
 UNKNOWN = "???"
+
+# Lite often invents role labels / stubs instead of real values.
+_PLACEHOLDER_EXACT = frozenset(
+    {
+        "заказчик",
+        "подрядчик",
+        "исполнитель",
+        "объект",
+        "договор",
+        "договор подряда",
+        "работы",
+        "наименование",
+        "адрес",
+    }
+)
+_PLACEHOLDER_PATTERNS = (
+    re.compile(r"^объект\s*№?\s*_+$", re.IGNORECASE | re.UNICODE),
+    re.compile(r"^договор(\s+подряда)?$", re.IGNORECASE | re.UNICODE),
+)
 
 
 class OverwriteError(ValueError):
@@ -91,6 +111,32 @@ def _is_unknown(value):
     return False
 
 
+def _is_placeholder(value):
+    # type: (Any) -> bool
+    """True for stubs Lite invents: Заказчик, Объект №__, ??? ____ 2026, etc."""
+    if _is_unknown(value):
+        return True
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return True
+    if "???" in text or "??." in text or "___" in text:
+        return True
+    norm = " ".join(text.lower().split())
+    if norm in _PLACEHOLDER_EXACT:
+        return True
+    for pattern in _PLACEHOLDER_PATTERNS:
+        if pattern.match(norm):
+            return True
+    return False
+
+
+def _is_usable_value(value):
+    # type: (Any) -> bool
+    return not _is_placeholder(value)
+
+
 def _values_equal(left, right):
     # type: (Any, Any) -> bool
     if _is_unknown(left) and _is_unknown(right):
@@ -98,11 +144,33 @@ def _values_equal(left, right):
     return left == right
 
 
+def _tree_is_complete(value):
+    # type: (Any) -> bool
+    if isinstance(value, dict):
+        if not value:
+            return False
+        return all(_tree_is_complete(item) for item in value.values())
+    if isinstance(value, list):
+        if not value:
+            return False
+        return all(_tree_is_complete(item) for item in value)
+    return _is_usable_value(value)
+
+
+def is_state_complete(state):
+    # type: (Dict[str, Any]) -> bool
+    """True when every schema field has a real (non-??? / non-stub) value."""
+    if not isinstance(state, dict) or not state:
+        return False
+    return _tree_is_complete(state)
+
+
 def apply_gpt_state(state, response, allow_overwrite=True):
     # type: (Dict[str, Any], Dict[str, Any], bool) -> Dict[str, Any]
     """
     Merge GPT response into state.
-    - Fill ??? slots with new non-unknown values.
+    - Fill ??? slots with usable (non-placeholder) values.
+    - Reject stubs like «Заказчик», «Объект», «Договор», «??? …».
     - If allow_overwrite: careful overwrite of already set fields (logged).
     - If not allow_overwrite: different value raises OverwriteError.
     """
@@ -115,12 +183,20 @@ def apply_gpt_state(state, response, allow_overwrite=True):
         new_val = response[key]
         old_val = state[key]
 
-        if _is_unknown(old_val):
+        if not _is_usable_value(new_val):
             if not _is_unknown(new_val):
-                state[key] = new_val
+                logger.info(
+                    "Reject placeholder key={!r}: {!r}",
+                    key,
+                    new_val,
+                )
             continue
 
-        if _is_unknown(new_val) or _values_equal(old_val, new_val):
+        if _is_unknown(old_val):
+            state[key] = new_val
+            continue
+
+        if _values_equal(old_val, new_val):
             continue
 
         if not allow_overwrite:

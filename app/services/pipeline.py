@@ -15,6 +15,7 @@ from app.services.schema_state import (
     apply_gpt_state,
     extract_skeleton,
     fresh_state,
+    is_state_complete,
 )
 from app.validators import validate_json_structure
 from app.services.vision import extract_pdf_page_atoms_with_vision
@@ -147,6 +148,14 @@ def _run_analysis(atoms, settings, prompt, skeleton):
                     block_text, settings, prompt, state
                 )
                 total_attempts += attempts
+                if is_state_complete(state):
+                    logger.info(
+                        "All fields filled after block {}; "
+                        "skipping remaining_atoms={}",
+                        blocks_sent,
+                        len(remaining),
+                    )
+                    break
             return state, total_attempts, blocks_sent
         except Exception as exc:
             last_error = exc
