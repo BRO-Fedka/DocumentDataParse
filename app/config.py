@@ -42,19 +42,29 @@ class Settings(BaseSettings):
     pdf_force_text: bool = Field(False, alias="PDF_FORCE_TEXT")
     pdf_image_page_area_ratio: float = Field(0.35, alias="PDF_IMAGE_PAGE_AREA_RATIO")
 
-    yandex_gpt_model: str = Field("yandexgpt-5.1/latest", alias="YANDEX_GPT_MODEL")
+    yandex_gpt_model: str = Field("yandexgpt-lite/latest", alias="YANDEX_GPT_MODEL")
     yandex_gpt_temperature: float = Field(0.1, alias="YANDEX_GPT_TEMPERATURE")
     yandex_gpt_max_tokens: int = Field(2000, alias="YANDEX_GPT_MAX_TOKENS")
+    # Async completion (cheaper tariff). Sync URL was .../completion.
     yandex_gpt_api_url: str = Field(
-        "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+        "https://llm.api.cloud.yandex.net/foundationModels/v1/completionAsync",
         alias="YANDEX_GPT_API_URL",
+    )
+    yandex_operations_api_url: str = Field(
+        "https://operation.api.cloud.yandex.net/operations",
+        alias="YANDEX_OPERATIONS_API_URL",
     )
     yandex_vision_api_url: str = Field(
         "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText",
         alias="YANDEX_VISION_API_URL",
     )
 
-    gpt_http_timeout_seconds: int = Field(180, alias="GPT_HTTP_TIMEOUT_SECONDS")
+    gpt_http_timeout_seconds: int = Field(60, alias="GPT_HTTP_TIMEOUT_SECONDS")
+    # Total wait for one async completion (submit + polls).
+    gpt_async_timeout_seconds: int = Field(300, alias="GPT_ASYNC_TIMEOUT_SECONDS")
+    gpt_async_poll_interval_seconds: float = Field(
+        1.0, alias="GPT_ASYNC_POLL_INTERVAL_SECONDS"
+    )
     vision_http_timeout_seconds: int = Field(120, alias="VISION_HTTP_TIMEOUT_SECONDS")
 
     # Comma-separated lists

@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any, Dict
 
 import requests
@@ -60,31 +61,30 @@ def _extract_json_object(gpt_text):
     return data
 
 
-def extract_fields_with_gpt(block_text, settings, prompt_template, state):
-    # type: (str, Settings, str, Dict[str, Any]) -> Dict[str, Any]
-    system_prompt = load_system_prompt(settings)
-    state_json = state_to_json(state, compact=True)
-    user_text = build_user_message(prompt_template, state_json, block_text)
-    model_uri = "gpt://{}/{}".format(settings.yandex_folder_id, settings.yandex_gpt_model)
+def _auth_headers(settings):
+    # type: (Settings) -> Dict[str, str]
+    return {
+        "Authorization": "Api-Key {}".format(settings.yandex_api_key),
+        "Content-Type": "application/json",
+    }
 
-    total_chars = len(system_prompt) + len(user_text)
-    if total_chars > settings.max_input_chars:
+
+def _completion_text_from_payload(payload):
+    # type: (Dict[str, Any]) -> str
+    """Extract assistant text from sync `result` or async operation `response`."""
+    try:
+        return payload["alternatives"][0]["message"]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
         raise YandexGptError(
-            "Request exceeds input budget: {} > {} chars".format(
-                total_chars, settings.max_input_chars
-            )
-        )
+            "Unexpected YandexGPT completion payload: {}".format(payload)
+        ) from exc
 
-    logger.info(
-        "YandexGPT request modelUri={} input_chars={}", model_uri, total_chars
-    )
 
+def _submit_async_completion(settings, model_uri, system_prompt, user_text):
+    # type: (Settings, str, str, str) -> str
     response = requests.post(
         settings.yandex_gpt_api_url,
-        headers={
-            "Authorization": "Api-Key {}".format(settings.yandex_api_key),
-            "Content-Type": "application/json",
-        },
+        headers=_auth_headers(settings),
         json={
             "modelUri": model_uri,
             "completionOptions": {
@@ -101,14 +101,87 @@ def extract_fields_with_gpt(block_text, settings, prompt_template, state):
     )
     if response.status_code != 200:
         raise YandexGptError(
-            "YandexGPT error: {} {}".format(response.status_code, response.text)
+            "YandexGPT async submit error: {} {}".format(
+                response.status_code, response.text
+            )
         )
 
-    result = response.json()
-    try:
-        gpt_text = result["result"]["alternatives"][0]["message"]["text"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise YandexGptError("Unexpected YandexGPT response: {}".format(result)) from exc
+    data = response.json()
+    operation_id = data.get("id")
+    if not operation_id:
+        raise YandexGptError(
+            "YandexGPT async submit missing operation id: {}".format(data)
+        )
+    return operation_id
 
+
+def _poll_operation(settings, operation_id):
+    # type: (Settings, str) -> Dict[str, Any]
+    """Poll until operation.done or GPT_ASYNC_TIMEOUT_SECONDS."""
+    url = "{}/{}".format(settings.yandex_operations_api_url.rstrip("/"), operation_id)
+    deadline = time.monotonic() + float(settings.gpt_async_timeout_seconds)
+    last = None  # type: Dict[str, Any]
+
+    while time.monotonic() < deadline:
+        response = requests.get(
+            url,
+            headers=_auth_headers(settings),
+            timeout=settings.gpt_http_timeout_seconds,
+        )
+        if response.status_code != 200:
+            raise YandexGptError(
+                "YandexGPT operation poll error: {} {}".format(
+                    response.status_code, response.text
+                )
+            )
+        last = response.json()
+        if last.get("done"):
+            if last.get("error"):
+                raise YandexGptError(
+                    "YandexGPT async operation failed: {}".format(last["error"])
+                )
+            return last
+        time.sleep(float(settings.gpt_async_poll_interval_seconds))
+
+    raise YandexGptError(
+        "YandexGPT async timeout after {}s (operation_id={}, last={})".format(
+            settings.gpt_async_timeout_seconds, operation_id, last
+        )
+    )
+
+
+def extract_fields_with_gpt(block_text, settings, prompt_template, state):
+    # type: (str, Settings, str, Dict[str, Any]) -> Dict[str, Any]
+    system_prompt = load_system_prompt(settings)
+    state_json = state_to_json(state, compact=True)
+    user_text = build_user_message(prompt_template, state_json, block_text)
+    model_uri = "gpt://{}/{}".format(settings.yandex_folder_id, settings.yandex_gpt_model)
+
+    total_chars = len(system_prompt) + len(user_text)
+    if total_chars > settings.max_input_chars:
+        raise YandexGptError(
+            "Request exceeds input budget: {} > {} chars".format(
+                total_chars, settings.max_input_chars
+            )
+        )
+
+    logger.info(
+        "YandexGPT async request modelUri={} input_chars={}", model_uri, total_chars
+    )
+
+    operation_id = _submit_async_completion(
+        settings, model_uri, system_prompt, user_text
+    )
+    logger.info("YandexGPT operation_id={}", operation_id)
+
+    operation = _poll_operation(settings, operation_id)
+    # Async Operation puts completion under `response` (sync uses `result`).
+    completion = operation.get("response")
+    if not isinstance(completion, dict):
+        raise YandexGptError(
+            "Unexpected YandexGPT async operation body: {}".format(operation)
+        )
+
+    gpt_text = _completion_text_from_payload(completion)
     logger.info("YandexGPT raw response:\n{}", gpt_text)
     return _extract_json_object(gpt_text)
