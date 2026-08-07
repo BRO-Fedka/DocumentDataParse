@@ -172,7 +172,7 @@ def apply_gpt_state(state, response, allow_overwrite=True):
     - Fill ??? slots with usable (non-placeholder) values.
     - Reject stubs like «Заказчик», «Объект», «Договор», «??? …».
     - If allow_overwrite: careful overwrite of already set fields (logged).
-    - If not allow_overwrite: different value raises OverwriteError.
+    - If not allow_overwrite: keep existing value (skip conflict, do not fail).
     """
     if not isinstance(response, dict):
         raise ValueError("GPT response must be a JSON object")
@@ -200,7 +200,13 @@ def apply_gpt_state(state, response, allow_overwrite=True):
             continue
 
         if not allow_overwrite:
-            raise OverwriteError(key, old_val, new_val)
+            logger.info(
+                "Skip overwrite key={!r}: keep {!r}, ignore {!r}",
+                key,
+                old_val,
+                new_val,
+            )
+            continue
 
         logger.info(
             "Careful overwrite key={!r}: {!r} -> {!r}",

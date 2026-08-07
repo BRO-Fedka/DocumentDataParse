@@ -19,9 +19,15 @@ from app.services.schema_state import (
 )
 from app.validators import validate_json_structure
 from app.services.vision import extract_pdf_page_atoms_with_vision
-from app.services.yandex_gpt import extract_fields_with_gpt
+from app.services.yandex_gpt import YandexGptError, extract_fields_with_gpt
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
+
+
+def _is_content_filter_error(exc):
+    # type: (BaseException) -> bool
+    text = str(exc).lower()
+    return "не могу обсуждать" in text or '"code":3' in text or "code': 3" in text
 
 # TODO(later): strict MIME / content-type validation for uploads.
 
@@ -103,10 +109,11 @@ def _process_block_with_retries(block_text, settings, prompt, state):
                 settings.gpt_block_retries,
                 exc,
             )
+            # Content filter will not change on retry — stop early.
+            if isinstance(exc, YandexGptError) and _is_content_filter_error(exc):
+                break
     raise RuntimeError(
-        "Block analysis failed after {} attempts: {}".format(
-            settings.gpt_block_retries, last_error
-        )
+        "Block analysis failed after {} attempts: {}".format(attempts, last_error)
     )
 
 
@@ -144,10 +151,20 @@ def _run_analysis(atoms, settings, prompt, skeleton):
                     blocks_sent,
                     len(remaining),
                 )
-                state, attempts = _process_block_with_retries(
-                    block_text, settings, prompt, state
-                )
-                total_attempts += attempts
+                try:
+                    state, attempts = _process_block_with_retries(
+                        block_text, settings, prompt, state
+                    )
+                    total_attempts += attempts
+                except RuntimeError as exc:
+                    # Keep partial progress: skip poisoned/filtered blocks.
+                    total_attempts += settings.gpt_block_retries
+                    logger.warning(
+                        "Skipping block {} after failures: {}",
+                        blocks_sent,
+                        exc,
+                    )
+                    continue
                 if is_state_complete(state):
                     logger.info(
                         "All fields filled after block {}; "
