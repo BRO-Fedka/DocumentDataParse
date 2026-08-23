@@ -1,51 +1,78 @@
-# DocumentDataParse — continuity handoff
+# DocumentDataParse — выжимка разговоров и состояние проекта
 
-Критичные решения для продолжения работы после смены чата/контекста.
-Обновлено: 2026-08-23. Remote: `https://github.com/BRO-Fedka/DocumentDataParse.git` (`main`).
+Файл для восстановления контекста после переполнения чата.  
+Remote: `https://github.com/BRO-Fedka/DocumentDataParse.git` (`main`).  
+Обновлено: 2026-08-23.
 
-## Цель продукта
+---
 
-Flask API: загрузка PDF/DOCX → извлечение текста → YandexGPT (клиентский prompt + JSON-скелет) → JSON полей. Клиент: Delphi. Деплой: VPS (сейчас Windows, `python main.py` / `app.main`), целевой Ubuntu. Файлы и сырой текст долго не хранить.
+## О чём проект
 
-## Архитектура пайплайна
+Нужен безопасный HTTP API: клиент (Delphi) шлёт PDF/DOCX + prompt со JSON-схемой → сервер извлекает текст → YandexGPT заполняет поля → JSON в ответ. Логи через Loguru; файлы/сырой текст долго не хранить. Деплой: Timeweb VPS.
 
-1. Атомы: PDF = страницы; DOCX = параграфы/таблицы по порядку.
-2. Динамическая нарезка блоков: `take_next_block` с учётом **текущего** JSON state (`measure_request_chars`).
-3. Последовательные вызовы GPT; merge в state; ретраи блока (N) и анализа (M).
-4. Ранний выход, если `is_state_complete(state)`.
+---
 
-Ключевые файлы: `app/services/pipeline.py`, `blocking.py`, `yandex_gpt.py`, `schema_state.py`, `pdf_extract.py`, `docx_extract.py`, `vision.py`.
+## Хронология решений (что обсуждали)
 
-## Yandex / стоимость
+### 1. Базовый пайплайн
+Собрали Flask `POST /parse` (multipart: username, prompt, files; header `X-API-Key`).  
+PDF: страницы; скан → Yandex Vision OCR. DOCX: параграфы/таблицы.  
+Текст режется на блоки под лимит GPT, state JSON с `???`, последовательные вызовы, merge.  
+GUI-клиент и prompt-файлы по типам документов (договор / доп / акт). README с контрактом API и примерами Delphi.
 
-- Модель: **`yandexgpt-lite/latest`** (не Pro 5.1).
-- Режим: **async** — `completionAsync` + poll `operation.api.cloud.yandex.net/operations/{id}`.
-- Sync был дороже ~×2; Pro дороже Lite ~×3–4.
-- Async иногда тормозит (минуты на блок) или висит до `GPT_ASYNC_TIMEOUT_SECONDS` (300).
+### 2. Баг «Request exceeds input budget»
+На DOCX падало: `32983 > 32760 chars` — **наш** лимит до вызова Яндекса.  
+Причина: блоки паковали с пустым state (`???`), а в запрос уходил уже заполненный JSON → перерасход.  
+**Решение:** размер считать по **текущему** state (`measure_request_chars` + `take_next_block` динамически). Compact JSON. Коммит `8f58a1f`.
 
-## Merge / качество Lite
+### 3. Дорого (~40 ₽/документ)
+Промпты короткие (~1 KB) — дублирование prompt не главный виновник. Жрёт **объём текста × число блоков × Pro sync**.  
+Обсудили: Lite, async (дешевле ~×2), меньше лишних вызовов.  
+Ссылки на тарифы: https://yandex.cloud/ru/docs/ai-studio/pricing  
+Async = не Python async, а `completionAsync` + poll операции.
 
-Проблема: со 2–3 блока Lite портит хорошие поля (`Заказчик`, `Объект`, укороченный `work_types`).
+### 4. Переход на Lite + async
+Модель `yandexgpt-lite/latest`, URL async + poll operations.  
+Для Delphi API тот же долгий `POST /parse` — ждёт сервер.  
+Коммит `12816a6`. На сервере вручную править `.env` (не в git).
 
-Сделано:
-- Чёрный список плейсхолдеров в `schema_state.py`.
-- При `MERGE_ALLOW_OVERWRITE=false`: **skip** конфликта (не raise), лог `Skip overwrite…`.
-- Падение блока (content-filter / таймаут): **skip блока**, не валить весь документ.
-- `system_prompt.txt`: запрет заглушек и сокращений.
+### 5. Деградация качества с блока 2–3
+Логи показали: блок 1 хороший; дальше Lite пишет «Заказчик»/«Объект»/«Договор» и **перетирает** нормальные значения (`MERGE_ALLOW_OVERWRITE=true`).  
+Предложили: (1) overwrite=false, (2) чёрный список плейсхолдеров, (3) early exit когда всё заполнено.  
+Внедрили **2+3** (`296cbdb`) + правки system_prompt.
 
-## Логи
+### 6. Ломающий overwrite=false
+На VPS поставили `MERGE_ALLOW_OVERWRITE=false` → конфликт стал **исключением** → ретраи → fail всего файла.  
+Параллельно: content-filter Яндекса на куске DOCX; async timeout по 300с.  
+**Фикс:** конфликт = `Skip overwrite` (не raise); упавший блок = skip, документ живёт. `8844213`.  
+Важно: фикс долго лежал только локально — сервер без pull снова падал с `Overwrite forbidden`.
 
-- Каталог: `DocumentDataParse/logs/` (от корня репо, не CWD).
-- `app_YYYY-MM-DD.log` — всё.
-- `app_errors_YYYY-MM-DD.log` — только ERROR+ с traceback.
-- `enqueue=False`, явный `{exception}` в формате.
-- При старте: `Logging to directory=...`
+### 7. Логи ошибок
+Ошибки видны в консоли, в файл Loguru — сомнительно (`enqueue=True` на Windows, нет отдельного ERROR-файла).  
+Усилили: `enqueue=False`, явный `{exception}`, `logs/app_errors_*.log`, Flask unhandled → loguru. `177a2a5`.
 
-## Env (важное)
+### 8. CHARS_PER_TOKEN
+Для русского договора ориентир **2** символа ≈ 1 токен (`CHARS_PER_TOKEN=2`). При отказах по лимиту — `1`. Параметр int, дробь нельзя без правки кода.
 
-Секреты только в `.env` (gitignored). Шаблон: `.env.example`.
+---
 
-Обязательно на сервере после Lite/async:
+## Текущая архитектура (коротко)
+
+| Часть | Как сейчас |
+|--------|------------|
+| API | Flask `POST /parse`, `X-API-Key` |
+| GPT | Lite + async completion + poll |
+| Блоки | Динамически от текущего JSON |
+| Merge | Плейсхолдеры reject; skip overwrite если false; skip failed block |
+| Логи | `logs/app_*.log` + `logs/app_errors_*.log` |
+| Промпт системы | `system_prompt.txt` |
+
+Ключевые файлы: `pipeline.py`, `blocking.py`, `yandex_gpt.py`, `schema_state.py`, `logging_setup.py`, `config.py`.
+
+---
+
+## Env на сервере (чеклист)
+
 ```
 YANDEX_GPT_MODEL=yandexgpt-lite/latest
 YANDEX_GPT_API_URL=https://llm.api.cloud.yandex.net/foundationModels/v1/completionAsync
@@ -53,38 +80,33 @@ YANDEX_OPERATIONS_API_URL=https://operation.api.cloud.yandex.net/operations
 GPT_HTTP_TIMEOUT_SECONDS=60
 GPT_ASYNC_TIMEOUT_SECONDS=300
 GPT_ASYNC_POLL_INTERVAL_SECONDS=1
-```
-
-Бюджет контекста:
-```
-GPT_MAX_INPUT_TOKENS=32760
 CHARS_PER_TOKEN=2
-```
-Для русского договора ~2 символа/токен; при отказах Яндекса по лимиту — `CHARS_PER_TOKEN=1`.
-
-Опционально строже: `MERGE_ALLOW_OVERWRITE=false`.
-
-## Известные грабли
-
-1. Имя файла Delphi MIME (`=?KOI8-R?B?...=`) — косметика.
-2. Content-filter Yandex на отдельных кусках DOCX: `code 3` / «не могу обсуждать» — блок скипается.
-3. Dev-сервер Flask на публичном IP — сканеры бьют `/`, `/.env` (404 ок).
-4. Не коммитить `.env` / API keys.
-
-## Недавние коммиты (ориентир)
-
-- `177a2a5` — надёжные error-логи Loguru
-- `8844213` — soft-skip overwrite + skip failed blocks
-- `296cbdb` — placeholders + early exit
-- `12816a6` — Lite + async
-- `8f58a1f` — packing по текущему state (budget overrun)
-
-## Деплой на VPS
-
-```
-git pull
-# сверить .env с .env.example (Lite/async ключи)
-# перезапуск python main.py / сервиса
+MERGE_ALLOW_OVERWRITE=false   # рекомендуется после soft-skip фикса
 ```
 
-После правок `system_prompt.txt` подтягивается с git; путь: `SYSTEM_PROMPT_FILE`.
+`.env` не коммитить. Шаблон: `.env.example`.
+
+После обновления кода: `git pull` + перезапуск + сверить `.env`.
+
+---
+
+## Открытые риски
+
+- Async Lite медленный / иногда timeout 300с на операцию.
+- Content-filter Яндекса на отдельных фрагментах → поле может остаться `???`.
+- Early-exit редко срабатывает, пока есть незаполненные поля (часто `end_date`).
+- Dev Flask на публичном IP — сканеры (не баг продукта).
+- Имена файлов из Delphi в MIME-encoding — косметика.
+
+---
+
+## Коммиты-ориентиры
+
+- `ef85c6d` / этот файл — continuity  
+- `177a2a5` — error logs  
+- `8844213` — soft-skip overwrite + skip blocks  
+- `296cbdb` — placeholders + early exit  
+- `12816a6` — Lite + async  
+- `8f58a1f` — packing vs current state  
+
+Транскрипт длинного чата (Cursor): agent-transcripts / `e57b8e8d-bc09-4b7c-b417-05cf9e79cb43`.
