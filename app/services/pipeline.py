@@ -18,7 +18,7 @@ from app.services.schema_state import (
     is_state_complete,
 )
 from app.validators import validate_json_structure
-from app.services.vision import extract_pdf_page_atoms_with_vision
+from app.services.vision import extract_pdf_atoms_with_vision
 from app.services.yandex_gpt import YandexGptError, extract_fields_with_gpt
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
@@ -74,7 +74,8 @@ def _collect_atoms(path, ext, settings):
             "PDF has {} pages; MAX_PAGES={}".format(page_count, settings.max_pages)
         )
     if analysis.use_vision:
-        atoms = extract_pdf_page_atoms_with_vision(path, settings)
+        # Whole PDF -> Vision once -> paragraph-like atoms (same GPT path as DOCX).
+        atoms = extract_pdf_atoms_with_vision(path, settings)
         text_source = "vision:{}".format(analysis.reason)
     else:
         atoms = extract_pdf_page_atoms(path)
