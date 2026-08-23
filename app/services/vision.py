@@ -14,23 +14,21 @@ class VisionError(RuntimeError):
 
 def _ocr_pdf_bytes(pdf_bytes, settings):
     # type: (bytes, Settings) -> str
+    # recognizeText expects top-level languageCodes (not textDetectionParams).
     language_codes = settings.vision_language_codes_list
-    text_types = settings.vision_text_types_list
     content = base64.b64encode(pdf_bytes).decode("utf-8")
     response = requests.post(
         settings.yandex_vision_api_url,
         headers={
             "Authorization": "Api-Key {}".format(settings.yandex_api_key),
             "Content-Type": "application/json",
+            "x-folder-id": settings.yandex_folder_id,
         },
         json={
-            "folderId": settings.yandex_folder_id,
-            "mimeType": "application/pdf",
+            "mimeType": "pdf",
+            "languageCodes": language_codes,
+            "model": "page",
             "content": content,
-            "textDetectionParams": {
-                "languageCodes": language_codes,
-                "textTypes": text_types,
-            },
         },
         timeout=settings.vision_http_timeout_seconds,
     )
