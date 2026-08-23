@@ -14,6 +14,8 @@ class VisionError(RuntimeError):
 
 def _ocr_pdf_bytes(pdf_bytes, settings):
     # type: (bytes, Settings) -> str
+    language_codes = settings.vision_language_codes_list
+    text_types = settings.vision_text_types_list
     content = base64.b64encode(pdf_bytes).decode("utf-8")
     response = requests.post(
         settings.yandex_vision_api_url,
@@ -26,8 +28,8 @@ def _ocr_pdf_bytes(pdf_bytes, settings):
             "mimeType": "application/pdf",
             "content": content,
             "textDetectionParams": {
-                "languageCodes": settings.vision_language_codes_list,
-                "textTypes": settings.vision_text_types_list,
+                "languageCodes": language_codes,
+                "textTypes": text_types,
             },
         },
         timeout=settings.vision_http_timeout_seconds,

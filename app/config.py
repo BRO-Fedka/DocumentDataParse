@@ -99,12 +99,23 @@ class Settings(BaseSettings):
     @property
     def vision_language_codes_list(self):
         # type: () -> list
-        return [part.strip() for part in self.vision_language_codes.split(",") if part.strip()]
+        codes = [
+            part.strip()
+            for part in self.vision_language_codes.split(",")
+            if part.strip()
+        ]
+        # Empty env (VISION_LANGUAGE_CODES=) must not send [] to Vision API.
+        return codes or ["ru", "en"]
 
     @property
     def vision_text_types_list(self):
         # type: () -> list
-        return [part.strip() for part in self.vision_text_types.split(",") if part.strip()]
+        types = [
+            part.strip()
+            for part in self.vision_text_types.split(",")
+            if part.strip()
+        ]
+        return types or ["printed"]
 
     @property
     def log_dir_path(self):

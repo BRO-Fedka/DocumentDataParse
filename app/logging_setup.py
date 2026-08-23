@@ -21,7 +21,8 @@ def setup_logging(settings):
         sys.stderr,
         level=settings.log_level,
         backtrace=True,
-        diagnose=True,
+        # diagnose dumps locals (can leak API keys from Settings) — keep off.
+        diagnose=False,
         format=(
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
             "<level>{level: <8}</level> | "
@@ -39,7 +40,7 @@ def setup_logging(settings):
         encoding="utf-8",
         enqueue=False,
         backtrace=True,
-        diagnose=True,
+        diagnose=False,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
             "{name}:{function}:{line} | {message}\n{exception}"
@@ -55,7 +56,7 @@ def setup_logging(settings):
         encoding="utf-8",
         enqueue=False,
         backtrace=True,
-        diagnose=True,
+        diagnose=False,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
             "{name}:{function}:{line} | {message}\n{exception}"
