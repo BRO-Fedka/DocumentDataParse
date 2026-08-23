@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # Max input tokens for the whole GPT request (system + user).
     gpt_max_input_tokens: int = Field(32760, alias="GPT_MAX_INPUT_TOKENS")
     # Hard conversion: tokens -> characters.
-    chars_per_token: int = Field(2, alias="CHARS_PER_TOKEN")
+    chars_per_token: float = Field(2, alias="CHARS_PER_TOKEN")
 
     # Retry same block on bad JSON / GPT errors (N).
     gpt_block_retries: int = Field(3, alias="GPT_BLOCK_RETRIES")
