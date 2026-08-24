@@ -74,7 +74,7 @@ def _collect_atoms(path, ext, settings):
             "PDF has {} pages; MAX_PAGES={}".format(page_count, settings.max_pages)
         )
     if analysis.use_vision:
-        # Whole PDF -> Vision once -> paragraph-like atoms (same GPT path as DOCX).
+        # Scanned PDF: page->JPEG->Vision, then line atoms (same GPT path as DOCX).
         atoms = extract_pdf_atoms_with_vision(path, settings)
         text_source = "vision:{}".format(analysis.reason)
     else:

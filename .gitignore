@@ -163,6 +163,7 @@ logs/
 tmp_uploads/
 result.json
 wheels/
+test/vision_ocr_out/
 
 # Spyder project settings
 .spyderproject

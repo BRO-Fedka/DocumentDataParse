@@ -66,6 +66,12 @@ class Settings(BaseSettings):
         1.0, alias="GPT_ASYNC_POLL_INTERVAL_SECONDS"
     )
     vision_http_timeout_seconds: int = Field(120, alias="VISION_HTTP_TIMEOUT_SECONDS")
+    # Render DPI for PDF page -> JPEG before Vision OCR.
+    vision_ocr_dpi: int = Field(150, alias="VISION_OCR_DPI")
+    # Pause between sync Vision requests (quota ~1 RPS).
+    vision_request_interval_seconds: float = Field(
+        1.1, alias="VISION_REQUEST_INTERVAL_SECONDS"
+    )
 
     # Comma-separated lists
     vision_language_codes: str = Field("ru,en", alias="VISION_LANGUAGE_CODES")

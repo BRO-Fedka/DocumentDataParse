@@ -1,7 +1,9 @@
 import base64
+import time
 from pathlib import Path
 from typing import List
 
+import fitz  # PyMuPDF
 import requests
 from loguru import logger
 
@@ -38,7 +40,6 @@ def _parse_ocr_response(payload):
     if result is None:
         return ""
 
-    # Single-page / aggregated: { "textAnnotation": {...} }
     if isinstance(result, dict):
         text = _annotation_to_text(result.get("textAnnotation") or {})
         if text:
@@ -51,7 +52,6 @@ def _parse_ocr_response(payload):
         ]
         return "\n".join(part for part in parts if part).strip()
 
-    # Multi-page list of annotations / page objects
     if isinstance(result, list):
         parts = []
         for item in result:
@@ -65,11 +65,19 @@ def _parse_ocr_response(payload):
     return ""
 
 
-def _ocr_pdf_bytes(pdf_bytes, settings):
-    # type: (bytes, Settings) -> str
-    # recognizeText expects top-level languageCodes (not textDetectionParams).
+def _page_to_jpeg_bytes(page, dpi):
+    # type: (fitz.Page, int) -> bytes
+    zoom = float(dpi) / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    return pix.tobytes("jpeg")
+
+
+def _ocr_image_bytes(image_bytes, settings, mime_type="jpeg"):
+    # type: (bytes, Settings, str) -> str
+    # Sync recognizeText: JPEG/PNG work; multi-page PDF often fails
+    # (page limit 1 / Can't decode image for scanned PDFs).
     language_codes = settings.vision_language_codes_list
-    content = base64.b64encode(pdf_bytes).decode("utf-8")
+    content = base64.b64encode(image_bytes).decode("utf-8")
     response = requests.post(
         settings.yandex_vision_api_url,
         headers={
@@ -78,7 +86,7 @@ def _ocr_pdf_bytes(pdf_bytes, settings):
             "x-folder-id": settings.yandex_folder_id,
         },
         json={
-            "mimeType": "pdf",
+            "mimeType": mime_type,
             "languageCodes": language_codes,
             "model": "page",
             "content": content,
@@ -109,16 +117,45 @@ def text_to_atoms(text):
 
 def extract_pdf_atoms_with_vision(path, settings):
     # type: (Path, Settings) -> List[str]
-    """OCR whole PDF once, then atomize text like a Word document."""
-    pdf_bytes = path.read_bytes()
-    logger.info(
-        "Vision OCR whole PDF bytes={} languageCodes={}",
-        len(pdf_bytes),
-        settings.vision_language_codes_list,
-    )
-    text = _ocr_pdf_bytes(pdf_bytes, settings)
+    """
+    OCR scanned PDF: render each page to JPEG, sync Vision, then atomize
+    like a Word document for the existing GPT blocking pipeline.
+    """
+    dpi = int(settings.vision_ocr_dpi)
+    interval = float(settings.vision_request_interval_seconds)
+    page_texts = []  # type: List[str]
+
+    with fitz.open(str(path)) as doc:
+        page_count = doc.page_count
+        logger.info(
+            "Vision OCR JPEG pages={} dpi={} languageCodes={} interval_s={}",
+            page_count,
+            dpi,
+            settings.vision_language_codes_list,
+            interval,
+        )
+        for page_index in range(page_count):
+            if page_index > 0 and interval > 0:
+                # Sync OCR quota is typically 1 request/sec.
+                time.sleep(interval)
+            jpeg_bytes = _page_to_jpeg_bytes(doc[page_index], dpi)
+            logger.info(
+                "Vision OCR page {}/{} jpeg_bytes={}",
+                page_index + 1,
+                page_count,
+                len(jpeg_bytes),
+            )
+            page_text = _ocr_image_bytes(jpeg_bytes, settings, mime_type="jpeg")
+            page_texts.append(page_text)
+
+    text = "\n\n".join(page_texts)
     atoms = text_to_atoms(text)
-    logger.info("Vision OCR done text_chars={} atoms={}", len(text), len(atoms))
+    logger.info(
+        "Vision OCR done pages={} text_chars={} atoms={}",
+        len(page_texts),
+        len(text),
+        len(atoms),
+    )
     return atoms
 
 
