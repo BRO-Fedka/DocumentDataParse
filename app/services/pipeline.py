@@ -208,6 +208,15 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
         if not any(atom.strip() for atom in atoms):
             raise ValueError("Extracted text is empty")
 
+        document_text = "\n".join(atom for atom in atoms if atom and atom.strip())
+        logger.info(
+            "Extracted document text source={} atoms={} chars={}:\n{}",
+            text_source,
+            len(atoms),
+            len(document_text),
+            document_text,
+        )
+
         fields, gpt_attempts, blocks_sent = _run_analysis(
             atoms, settings, prompt, skeleton
         )

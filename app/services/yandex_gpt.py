@@ -186,13 +186,14 @@ def extract_fields_with_gpt(block_text, settings, prompt_template, state):
         len(user_text),
         len(block_text),
     )
+    # Exact messages sent to the API (same for docx / pdf_text / vision).
     logger.info(
-        "YandexGPT FINAL system prompt ({} chars):\n{}",
+        "YandexGPT ASSEMBLED request (system + user, {} chars):\n"
+        "===== SYSTEM ({} chars) =====\n{}\n"
+        "===== USER ({} chars) =====\n{}",
+        total_chars,
         len(system_prompt),
         system_prompt,
-    )
-    logger.info(
-        "YandexGPT FINAL user prompt ({} chars):\n{}",
         len(user_text),
         user_text,
     )

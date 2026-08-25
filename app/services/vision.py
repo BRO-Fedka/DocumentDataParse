@@ -156,11 +156,6 @@ def extract_pdf_atoms_with_vision(path, settings):
         len(text),
         len(atoms),
     )
-    logger.info(
-        "Vision OCR FULL document text ({} chars):\n{}",
-        len(text),
-        text,
-    )
     return atoms
 
 
