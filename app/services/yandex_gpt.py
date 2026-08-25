@@ -31,12 +31,24 @@ def build_user_message(prompt_template, state_json, block_text):
     )
 
 
-def measure_request_chars(prompt_template, state, block_text, settings):
-    # type: (str, dict, str, Settings) -> int
-    """Full GPT request size (system + user) with the given state."""
+def build_gpt_messages(prompt_template, state, block_text, settings):
+    # type: (str, dict, str, Settings) -> tuple
+    """
+    Exact system + user texts that will be sent to YandexGPT.
+    Used both for budget measurement and the real async submit.
+    """
     system_prompt = load_system_prompt(settings)
     state_json = state_to_json(state, compact=True)
     user_text = build_user_message(prompt_template, state_json, block_text)
+    return system_prompt, user_text
+
+
+def measure_request_chars(prompt_template, state, block_text, settings):
+    # type: (str, dict, str, Settings) -> int
+    """Full GPT request size (system + user) with the given state."""
+    system_prompt, user_text = build_gpt_messages(
+        prompt_template, state, block_text, settings
+    )
     return len(system_prompt) + len(user_text)
 
 
@@ -152,9 +164,9 @@ def _poll_operation(settings, operation_id):
 
 def extract_fields_with_gpt(block_text, settings, prompt_template, state):
     # type: (str, Settings, str, Dict[str, Any]) -> Dict[str, Any]
-    system_prompt = load_system_prompt(settings)
-    state_json = state_to_json(state, compact=True)
-    user_text = build_user_message(prompt_template, state_json, block_text)
+    system_prompt, user_text = build_gpt_messages(
+        prompt_template, state, block_text, settings
+    )
     model_uri = "gpt://{}/{}".format(settings.yandex_folder_id, settings.yandex_gpt_model)
 
     total_chars = len(system_prompt) + len(user_text)
@@ -166,7 +178,23 @@ def extract_fields_with_gpt(block_text, settings, prompt_template, state):
         )
 
     logger.info(
-        "YandexGPT async request modelUri={} input_chars={}", model_uri, total_chars
+        "YandexGPT async request modelUri={} input_chars={} "
+        "system_chars={} user_chars={} block_chars={}",
+        model_uri,
+        total_chars,
+        len(system_prompt),
+        len(user_text),
+        len(block_text),
+    )
+    logger.info(
+        "YandexGPT FINAL system prompt ({} chars):\n{}",
+        len(system_prompt),
+        system_prompt,
+    )
+    logger.info(
+        "YandexGPT FINAL user prompt ({} chars):\n{}",
+        len(user_text),
+        user_text,
     )
 
     operation_id = _submit_async_completion(
