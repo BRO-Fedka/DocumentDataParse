@@ -191,23 +191,31 @@ def _run_analysis(atoms, settings, prompt, skeleton):
     )
 
 
-def process_local_file(path, filename, content_type, size_bytes, settings, prompt):
-    # type: (Path, str, Optional[str], int, Settings, str) -> FileParseResult
+def process_document_text(
+    atoms,
+    filename,
+    settings,
+    prompt,
+    text_source="text",
+    content_type=None,
+    size_bytes=0,
+    extension="",
+    page_count=None,
+):
+    # type: (List[str], str, Settings, str, str, Optional[str], int, str, Optional[int]) -> FileParseResult
+    """
+    Adapter (прокладка): atoms → same GPT analysis path as PDF/DOCX/Vision.
+
+    Swap or wrap callers (file / zakupki / future sources) without changing GPT logic.
+    """
     started = time.perf_counter()
-    ext = path.suffix.lower()
-    text_source = None  # type: Optional[str]
-    page_count = None  # type: Optional[int]
     gpt_attempts = None  # type: Optional[int]
 
     try:
-        if ext not in SUPPORTED_EXTENSIONS:
-            raise ValueError("Unsupported extension: {}".format(ext))
-
-        skeleton = extract_skeleton(prompt)
-        atoms, text_source, page_count = _collect_atoms(path, ext, settings)
-        if not any(atom.strip() for atom in atoms):
+        if not any(atom and atom.strip() for atom in atoms):
             raise ValueError("Extracted text is empty")
 
+        skeleton = extract_skeleton(prompt)
         document_text = "\n".join(atom for atom in atoms if atom and atom.strip())
         logger.info(
             "Extracted document text source={} atoms={} chars={}:\n{}",
@@ -222,7 +230,7 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
-            "Parsed file ok filename={} size={} type={} source={} pages={} "
+            "Parsed document ok filename={} size={} type={} source={} pages={} "
             "blocks={} gpt_attempts={} duration_ms={}",
             filename,
             size_bytes,
@@ -240,7 +248,7 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
             meta=FileResultMeta(
                 size_bytes=size_bytes,
                 content_type=content_type,
-                extension=ext,
+                extension=extension,
                 text_source=text_source,
                 page_count=page_count,
                 gpt_attempts=gpt_attempts,
@@ -250,7 +258,7 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
     except Exception as exc:
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.exception(
-            "Failed to parse file filename={} size={} type={} duration_ms={} error={}",
+            "Failed to parse document filename={} size={} type={} duration_ms={} error={}",
             filename,
             size_bytes,
             content_type,
@@ -264,10 +272,56 @@ def process_local_file(path, filename, content_type, size_bytes, settings, promp
             meta=FileResultMeta(
                 size_bytes=size_bytes,
                 content_type=content_type,
-                extension=ext or Path(filename).suffix.lower(),
+                extension=extension or Path(filename).suffix.lower(),
                 text_source=text_source,
                 page_count=page_count,
                 gpt_attempts=gpt_attempts,
+                duration_ms=duration_ms,
+                error=str(exc),
+            ),
+        )
+
+
+def process_local_file(path, filename, content_type, size_bytes, settings, prompt):
+    # type: (Path, str, Optional[str], int, Settings, str) -> FileParseResult
+    started = time.perf_counter()
+    ext = path.suffix.lower()
+    try:
+        if ext not in SUPPORTED_EXTENSIONS:
+            raise ValueError("Unsupported extension: {}".format(ext))
+        atoms, text_source, page_count = _collect_atoms(path, ext, settings)
+        result = process_document_text(
+            atoms,
+            filename=filename,
+            settings=settings,
+            prompt=prompt,
+            text_source=text_source or "file",
+            content_type=content_type,
+            size_bytes=size_bytes,
+            extension=ext,
+            page_count=page_count,
+        )
+        # Include extract/OCR time in meta (adapter timer is GPT-only).
+        result.meta.duration_ms = int((time.perf_counter() - started) * 1000)
+        return result
+    except Exception as exc:
+        # Keep same failure shape if atom collection fails before the adapter.
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.exception(
+            "Failed to collect atoms filename={} size={} type={} error={}",
+            filename,
+            size_bytes,
+            content_type,
+            exc,
+        )
+        return FileParseResult(
+            filename=filename,
+            success=False,
+            fields=None,
+            meta=FileResultMeta(
+                size_bytes=size_bytes,
+                content_type=content_type,
+                extension=ext or Path(filename).suffix.lower(),
                 duration_ms=duration_ms,
                 error=str(exc),
             ),

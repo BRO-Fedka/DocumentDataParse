@@ -89,6 +89,36 @@ class Settings(BaseSettings):
 
     temp_dir: str = Field("tmp_uploads", alias="TEMP_DIR")
 
+    # --- zakupki.gov.ru (FZ-223 contract registry) ---
+    zakupki_base_url: str = Field(
+        "https://zakupki.gov.ru", alias="ZAKUPKI_BASE_URL"
+    )
+    # {document_id} is URL-encoded and substituted into searchString.
+    zakupki_search_url_template: str = Field(
+        "https://zakupki.gov.ru/epz/contractfz223/search/results.html"
+        "?searchString={document_id}"
+        "&morphology=on"
+        "&search-filter=%D0%94%D0%B0%D1%82%D0%B5+%D1%80%D0%B0%D0%B7%D0%BC%D0%B5%D1%89%D0%B5%D0%BD%D0%B8%D1%8F"
+        "&statuses_0=on"
+        "&statuses=0"
+        "&currencyId=-1"
+        "&sortBy=BY_UPDATE_DATE"
+        "&pageNumber=1"
+        "&sortDirection=false"
+        "&recordsPerPage=_10"
+        "&showLotsInfoHidden=false",
+        alias="ZAKUPKI_SEARCH_URL_TEMPLATE",
+    )
+    zakupki_http_timeout_seconds: int = Field(
+        60, alias="ZAKUPKI_HTTP_TIMEOUT_SECONDS"
+    )
+    # Set false behind corporate SSL intercept / broken local trust store.
+    zakupki_ssl_verify: bool = Field(True, alias="ZAKUPKI_SSL_VERIFY")
+    zakupki_user_agent: str = Field(
+        "Mozilla/5.0 (compatible; DocumentDataParse/1.0; +https://zakupki.gov.ru)",
+        alias="ZAKUPKI_USER_AGENT",
+    )
+
     @property
     def max_input_chars(self):
         # type: () -> int

@@ -6,6 +6,7 @@ from werkzeug.exceptions import HTTPException
 
 from app.config import get_settings
 from app.logging_setup import setup_logging
+from app.routes.get_document_data import bp as get_document_data_bp
 from app.routes.parse import bp as parse_bp
 
 
@@ -19,6 +20,7 @@ def create_app():
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = settings.max_upload_bytes
     app.register_blueprint(parse_bp)
+    app.register_blueprint(get_document_data_bp)
 
     @app.errorhandler(Exception)
     def _unhandled_error(exc):
