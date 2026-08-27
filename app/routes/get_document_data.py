@@ -59,7 +59,17 @@ def get_document_data():
             document_id,
             exc,
         )
-        return jsonify({"detail": "Failed to fetch document from zakupki.gov.ru"}), 502
+        # Surface root cause (often SSLCertVerificationError behind MITM/proxy).
+        return (
+            jsonify(
+                {
+                    "detail": "Failed to fetch document from zakupki.gov.ru: {}".format(
+                        exc
+                    )
+                }
+            ),
+            502,
+        )
 
     size_bytes = sum(len(atom.encode("utf-8")) for atom in atoms)
     result = process_document_text(
