@@ -10,6 +10,11 @@ from app.config import Settings
 from app.models import FileParseResult, FileResultMeta
 from app.services.blocking import take_next_block
 from app.services.docx_extract import extract_docx_atoms
+from app.services.filenames import (
+    SUPPORTED_EXTENSIONS,
+    decode_upload_filename,
+    resolve_upload_extension,
+)
 from app.services.pdf_extract import analyze_pdf, extract_pdf_page_atoms
 from app.services.schema_state import (
     apply_gpt_state,
@@ -20,8 +25,6 @@ from app.services.schema_state import (
 from app.validators import validate_json_structure
 from app.services.vision import extract_pdf_atoms_with_vision
 from app.services.yandex_gpt import YandexGptError, extract_fields_with_gpt
-
-SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
 
 def _is_content_filter_error(exc):
@@ -341,14 +344,28 @@ def process_uploads(files, username, request_id, settings, prompt):
     )
 
     for upload in files:
-        original_name = upload.filename or "unnamed"
-        ext = Path(original_name).suffix.lower()
+        original_name = decode_upload_filename(upload.filename)
+        ext = resolve_upload_extension(original_name, upload.mimetype)
         temp_path = settings.temp_dir_path / "{}_{}{}".format(
-            request_id, uuid.uuid4().hex, ext
+            request_id, uuid.uuid4().hex, ext or ".bin"
         )
         size_bytes = 0
         try:
             size_bytes = save_upload(upload, temp_path, settings.max_upload_bytes)
+            if ext not in SUPPORTED_EXTENSIONS:
+                sniffed = resolve_upload_extension(
+                    original_name, upload.mimetype, path=temp_path
+                )
+                if sniffed in SUPPORTED_EXTENSIONS and sniffed != temp_path.suffix.lower():
+                    renamed = temp_path.with_suffix(sniffed)
+                    temp_path.rename(renamed)
+                    temp_path = renamed
+                    ext = sniffed
+                    logger.info(
+                        "Resolved upload extension via sniff filename={} ext={}",
+                        original_name,
+                        ext,
+                    )
             result = process_local_file(
                 temp_path,
                 filename=original_name,

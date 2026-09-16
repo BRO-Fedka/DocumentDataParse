@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     gpt_block_retries: int = Field(3, alias="GPT_BLOCK_RETRIES")
     # Restart whole file analysis (M).
     gpt_analysis_retries: int = Field(2, alias="GPT_ANALYSIS_RETRIES")
+    # Cap document text per GPT block (chars). Large DOCX can fit the full
+    # input budget in one shot and then hit Yandex content-filter (code 3).
+    gpt_max_block_doc_chars: int = Field(12000, alias="GPT_MAX_BLOCK_DOC_CHARS")
 
     max_upload_bytes: int = Field(20 * 1024 * 1024, alias="MAX_UPLOAD_BYTES")
     max_pages: int = Field(100, alias="MAX_PAGES")
