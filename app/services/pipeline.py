@@ -8,7 +8,7 @@ from werkzeug.datastructures import FileStorage
 
 from app.config import Settings
 from app.models import FileParseResult, FileResultMeta
-from app.services.blocking import take_next_block
+from app.services.blocking import arrange_atoms, split_atom_chunks, take_next_block
 from app.services.docx_extract import extract_docx_atoms
 from app.services.filenames import (
     SUPPORTED_EXTENSIONS,
@@ -121,62 +121,94 @@ def _process_block_with_retries(block_text, settings, prompt, state):
     )
 
 
+def _consume_atoms(remaining, state, settings, prompt, blocks_sent, total_attempts):
+    # type: (List[str], dict, Settings, str, int, int) -> Tuple[dict, int, int]
+    """Send packed blocks until the queue is empty or every field is filled."""
+    while remaining:
+        if is_state_complete(state):
+            logger.info(
+                "All fields filled; skipping remaining_atoms={}",
+                len(remaining),
+            )
+            break
+        block_text = take_next_block(remaining, prompt, state, settings)
+        if not block_text:
+            break
+        blocks_sent += 1
+        logger.info(
+            "Processing block {} (remaining_atoms={})",
+            blocks_sent,
+            len(remaining),
+        )
+        try:
+            state, attempts = _process_block_with_retries(
+                block_text, settings, prompt, state
+            )
+            total_attempts += attempts
+        except RuntimeError as exc:
+            # Keep partial progress: skip poisoned/filtered blocks.
+            total_attempts += settings.gpt_block_retries
+            logger.warning(
+                "Skipping block {} after failures: {}",
+                blocks_sent,
+                exc,
+            )
+            continue
+    return state, blocks_sent, total_attempts
+
+
 def _run_analysis(atoms, settings, prompt, skeleton):
     # type: (List[str], Settings, str, dict) -> Tuple[dict, int, int]
     """
     Full pass over document atoms. Each next block is packed with the *current*
     JSON state size. Retries whole analysis up to GPT_ANALYSIS_RETRIES (M).
 
+    Atoms that cannot fit in one GPT request are deferred and split only when
+    fields are still missing after the rest of the document.
+
     Returns final state, total GPT attempts, and number of blocks sent.
     """
     last_error = None  # type: Optional[Exception]
     total_attempts = 0
     cleaned = [atom.strip() for atom in atoms if atom and atom.strip()]
+    max_doc = int(getattr(settings, "gpt_max_block_doc_chars", 0) or 0) or 12000
 
     for analysis_round in range(1, settings.gpt_analysis_retries + 1):
         state = fresh_state(skeleton)
-        remaining = list(cleaned)
+        primary, deferred = arrange_atoms(cleaned, prompt, state, settings)
         blocks_sent = 0
         try:
             logger.info(
-                "Analysis round {}/{} atoms={}",
+                "Analysis round {}/{} primary_atoms={} deferred_atoms={}",
                 analysis_round,
                 settings.gpt_analysis_retries,
-                len(remaining),
+                len(primary),
+                len(deferred),
             )
-            while remaining:
-                # Pack next block against the current (possibly filled) JSON.
-                block_text = take_next_block(remaining, prompt, state, settings)
-                if not block_text:
-                    break
-                blocks_sent += 1
+            state, blocks_sent, total_attempts = _consume_atoms(
+                primary, state, settings, prompt, blocks_sent, total_attempts
+            )
+            if deferred and not is_state_complete(state):
+                deferred_chunks = []  # type: List[str]
+                for atom in deferred:
+                    deferred_chunks.extend(split_atom_chunks(atom, max_doc))
                 logger.info(
-                    "Processing block {} (remaining_atoms={})",
-                    blocks_sent,
-                    len(remaining),
+                    "Fields still missing; processing deferred chunks={}",
+                    len(deferred_chunks),
                 )
-                try:
-                    state, attempts = _process_block_with_retries(
-                        block_text, settings, prompt, state
-                    )
-                    total_attempts += attempts
-                except RuntimeError as exc:
-                    # Keep partial progress: skip poisoned/filtered blocks.
-                    total_attempts += settings.gpt_block_retries
-                    logger.warning(
-                        "Skipping block {} after failures: {}",
-                        blocks_sent,
-                        exc,
-                    )
-                    continue
-                if is_state_complete(state):
-                    logger.info(
-                        "All fields filled after block {}; "
-                        "skipping remaining_atoms={}",
-                        blocks_sent,
-                        len(remaining),
-                    )
-                    break
+                state, blocks_sent, total_attempts = _consume_atoms(
+                    deferred_chunks,
+                    state,
+                    settings,
+                    prompt,
+                    blocks_sent,
+                    total_attempts,
+                )
+            elif deferred:
+                logger.info(
+                    "All fields filled; skipping deferred_atoms={}",
+                    len(deferred),
+                )
             return state, total_attempts, blocks_sent
         except Exception as exc:
             last_error = exc
